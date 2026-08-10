@@ -71,6 +71,10 @@ export const SCORE_LIMIT = 30;
 export const TIME_LIMIT_MS = 10 * 60 * 1000;
 export const RESPAWN_DELAY_MS = 3000;
 
+// Rooms / matchmaking
+export const RECONNECT_GRACE_MS = 15000; // window to RESUME after a dropped connection before the seat is given up
+export const MIN_PLAYERS_TO_FORCE_START = 2; // private-room host can START_MATCH early once both teams have someone
+
 // Practice target dummies — stationary shootable targets that take damage
 // like a player and relocate to a new random spot (full health) once
 // "killed", instead of teleporting on the very first hit. Not part of

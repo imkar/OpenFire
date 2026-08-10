@@ -14,3 +14,11 @@ export function sendTo(player, message) {
     player.ws.send(encode(message));
   }
 }
+
+// For replies sent before a player object exists yet (room-join errors,
+// failed resume) — same guard, just addressed directly by the raw socket.
+export function sendRaw(ws, message) {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(encode(message));
+  }
+}

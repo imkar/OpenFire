@@ -20,28 +20,22 @@ export function createControls(domElement) {
   let jumpQueued = false;
   let reloadQueued = false;
   let aiming = false;
-  // True once pointer lock has been acquired at least once — distinguishes
-  // "never joined yet" (losing lock re-shows the join overlay) from
-  // "was playing, Escape was pressed" (losing lock opens the pause menu).
-  let hasEngaged = false;
 
   const overlay = document.getElementById('overlay');
 
-  // The overlay sits visually on top of the canvas (z-index) while visible,
-  // so a click there never reaches domElement's own listener — listen on
-  // document instead so both the overlay and the bare canvas trigger lock.
-  document.addEventListener('click', () => {
-    if (pauseMenu.isOpen()) return; // the menu's own buttons handle their clicks
-    unlockAudio(); // must happen synchronously inside a user-gesture handler
+  // Single choke point for acquiring pointer lock — MUST be called
+  // synchronously from within a genuine user gesture (click/keydown), never
+  // after an async round-trip (a WebSocket reply included), or the browser
+  // silently refuses it. Used by the main menu/lobby's "join" buttons and by
+  // the pause menu's "Devam Et" button (including after a reconnect résumé).
+  function requestEngage() {
+    unlockAudio(); // must also happen synchronously inside a user-gesture handler
     if (document.pointerLockElement !== domElement) {
       domElement.requestPointerLock();
     }
-  });
+  }
 
-  pauseMenu.onResume(() => {
-    unlockAudio();
-    domElement.requestPointerLock();
-  });
+  pauseMenu.onResume(requestEngage);
 
   // Releases every held key/button — called whenever pointer lock is lost so
   // nothing stays "on" while the pause menu is up (otherwise a key still
@@ -60,19 +54,18 @@ export function createControls(domElement) {
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === domElement;
     if (locked) {
-      hasEngaged = true;
       pauseMenu.hide();
-      if (overlay) overlay.classList.add('hidden');
     } else {
       releaseAllInputs();
-      if (!hasEngaged) {
-        if (overlay) overlay.classList.remove('hidden');
-      } else if (overlay && overlay.classList.contains('hidden')) {
-        // Mid-game Escape, no death/match-end message currently on screen.
+      // Pointer lock is only ever requested once gameplay has actually
+      // started (menu/lobby buttons, or a résumé) — so any loss from here on
+      // is a genuine mid-match pause (Escape, alt-tab, dropped connection),
+      // never a menu/lobby state that hadn't acquired lock in the first
+      // place. Skip the pause menu only if a death/match-end message is
+      // already occupying #overlay — that already has its own continue flow.
+      if (overlay && overlay.classList.contains('hidden')) {
         pauseMenu.show();
       }
-      // Otherwise a death/match-end message is already showing on #overlay —
-      // leave it alone, the existing click-anywhere-to-continue still works.
     }
   });
 
@@ -190,5 +183,6 @@ export function createControls(domElement) {
     isLocked() {
       return document.pointerLockElement === domElement;
     },
+    requestEngage,
   };
 }

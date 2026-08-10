@@ -9,9 +9,11 @@ import { startLoop } from './game/loop.js';
 import { createSocket } from './net/socket.js';
 import { createPrediction } from './net/prediction.js';
 import * as hud from './render/hud.js';
+import * as menu from './ui/menu.js';
+import * as pauseMenu from './ui/pauseMenu.js';
 import { spawnBloodEffect } from './render/bloodEffect.js';
 import { playFire, playReload } from './audio/sfx.js';
-import { FIXED_DT, RESPAWN_DELAY_MS, MAGAZINE_SIZE, RESERVE_AMMO_SIZE } from '../shared/constants.js';
+import { FIXED_DT, RESPAWN_DELAY_MS, MAGAZINE_SIZE, RESERVE_AMMO_SIZE, MIN_PLAYERS_TO_FORCE_START } from '../shared/constants.js';
 
 const { scene, camera, renderer } = createScene();
 buildArena(scene);
@@ -31,6 +33,13 @@ let myReloading = false;
 let wasReloading = false;
 let matchPhase = 'waiting';
 let deathOverlayTimer = null;
+let myRoomCode = null;
+let myHostId = null;
+// True from the moment a private room's Lobby view is shown until the match
+// actually goes live — gates the per-snapshot roster refresh and the
+// Lobby -> "Hazır, tıkla" hand-off so neither runs during quickplay (which
+// never shows a lobby at all) or once already past it.
+let awaitingLiveTransition = false;
 
 function startDeathCountdown() {
   let remainingMs = RESPAWN_DELAY_MS;
@@ -54,14 +63,55 @@ function stopDeathCountdown() {
 const socket = createSocket({
   onWelcome(msg) {
     myTeam = msg.team;
+    myRoomCode = msg.code;
+    myHostId = msg.hostId;
     localPlayer.snapTo({ position: msg.position, velocity: { x: 0, y: 0, z: 0 }, yaw: msg.yaw, onGround: false });
     hud.updateHealth(100, myTeam);
     hud.updateAmmo(myAmmo, myReserveAmmo, myReloading);
+
+    if (msg.isPrivate) {
+      // Roster isn't known yet from WELCOME alone — the very next snapshot
+      // (within ~16ms at 60Hz) fills it in via the awaitingLiveTransition
+      // branch below, so an empty-looking roster here is never visible.
+      awaitingLiveTransition = true;
+      menu.showLobby({ code: myRoomCode, players: [], myId: msg.playerId, hostId: myHostId, minPlayersToStart: MIN_PLAYERS_TO_FORCE_START });
+    }
+    // Public quickplay rooms skip the lobby entirely — the menu was already
+    // hidden and pointer lock already requested synchronously on click.
+  },
+
+  onResumed(msg) {
+    myTeam = msg.team;
+    myRoomCode = msg.code;
+    myHostId = msg.hostId;
+    localPlayer.snapTo({ position: msg.position, velocity: { x: 0, y: 0, z: 0 }, yaw: msg.yaw, onGround: false });
+    // Health/ammo/etc are corrected by the very next snapshot — pointer lock
+    // can't be re-acquired from this async reply (no fresh user gesture), so
+    // the pause menu's existing "Devam Et" button is reused to get it back.
+    menu.hide();
+    pauseMenu.show();
+  },
+
+  onResumeFailed() {
+    menu.showHome();
+  },
+
+  onRoomError(msg) {
+    menu.setError(msg.message);
   },
 
   onSnapshot(msg) {
     matchPhase = msg.phase;
     hud.updateScoreboard(msg.scores, msg.phase, msg.players.length);
+
+    if (awaitingLiveTransition) {
+      if (msg.phase === 'live') {
+        awaitingLiveTransition = false;
+        menu.showReady();
+      } else {
+        menu.showLobby({ code: myRoomCode, players: msg.players, myId: socket.getPlayerId(), hostId: myHostId, minPlayersToStart: MIN_PLAYERS_TO_FORCE_START });
+      }
+    }
 
     const myId = socket.getPlayerId();
     const me = msg.players.find((p) => p.id === myId);
@@ -138,6 +188,43 @@ const socket = createSocket({
 
 const prediction = createPrediction(localPlayer, socket);
 
+// Quickplay essentially never fails, so it engages pointer lock immediately
+// (synchronously, from the click itself — see controls.js's requestEngage)
+// and hides the menu right away, matching the game's original instant-join
+// feel. Private-room create/join defer pointer lock until the final
+// Lobby -> "Hazır, tıkla" step (see onWelcome/onSnapshot above) since they
+// can fail (full room, bad code) and clickable buttons need a real cursor.
+menu.onQuickplay(() => {
+  socket.sendQuickplay();
+  controls.requestEngage();
+  menu.hide();
+});
+
+menu.onCreateRoom(() => {
+  socket.sendCreateRoom();
+});
+
+menu.onJoinRoom((code) => {
+  socket.sendJoinRoom(code);
+});
+
+menu.onCancelLobby(() => {
+  socket.sendLeaveRoom();
+  awaitingLiveTransition = false;
+  menu.showHome();
+});
+
+menu.onStartMatch(() => {
+  socket.sendStartMatch();
+});
+
+menu.onReady(() => {
+  controls.requestEngage();
+  menu.hide();
+});
+
+menu.showHome();
+
 // FPS is measured from actual render-callback timing (not the fixed 60Hz
 // simulation tick) and averaged over a short window — updated a few times a
 // second, not every frame, so the HUD text itself doesn't add render cost.
@@ -155,7 +242,11 @@ startLoop({
     // too — only a fully 'ended' match (between rounds) freezes players.
     // Damage/scoring stays gated to 'live' server-side regardless of what
     // the client sends, so firing during warm-up is a harmless no-op there.
-    const canAct = myAlive && matchPhase !== 'ended';
+    // `inRoom` additionally covers the whole main-menu/lobby period before a
+    // room even exists yet — playerId is only ever set once WELCOME/resume
+    // actually assigns one, so there's nothing to predict/send before then.
+    const inRoom = socket.getPlayerId() !== null;
+    const canAct = inRoom && myAlive && matchPhase !== 'ended';
     const canMove = canAct;
     const canFire = canAct && myAmmo > 0 && !myReloading;
 

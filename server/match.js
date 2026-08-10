@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { spawnPoints } from '../shared/mapData.js';
 import { TEAM_A, TEAM_B, MAX_PLAYERS, PLAYER_MAX_HEALTH, TIME_LIMIT_MS, MAGAZINE_SIZE, RESERVE_AMMO_SIZE } from '../shared/constants.js';
 import { createDummies } from './dummies.js';
@@ -5,8 +6,15 @@ import { createDummies } from './dummies.js';
 let nextPlayerId = 1;
 let spawnCursor = { [TEAM_A]: 0, [TEAM_B]: 0 };
 
-export function createMatch() {
+// `id`/`isPrivate`/`code` are assigned by server/rooms.js right after
+// creation (it owns the room registry/code index) — match.js itself just
+// carries them, and reserves a null slot for `code` on public rooms.
+export function createMatch({ id, isPrivate, code = null } = {}) {
   return {
+    id,
+    isPrivate: !!isPrivate,
+    code,
+    hostId: null, // first player to join a private room; null for public/quickplay rooms
     phase: 'waiting', // waiting | live | ended
     players: new Map(),
     dummies: createDummies(), // practice targets — independent of match phase/scoring
@@ -15,6 +23,14 @@ export function createMatch() {
     endsAt: null,
     winner: null,
   };
+}
+
+// Flips a room live — called both when a room fills to capacity and when a
+// private room's host force-starts early (see MIN_PLAYERS_TO_FORCE_START).
+export function startMatch(match) {
+  match.phase = 'live';
+  match.startedAt = Date.now();
+  match.endsAt = Date.now() + TIME_LIMIT_MS;
 }
 
 function pickSpawn(team) {
@@ -60,14 +76,15 @@ export function addPlayer(match, ws) {
     reserveAmmo: RESERVE_AMMO_SIZE,
     reloading: false,
     reloadEndsAt: null,
+    sessionToken: randomUUID(),
+    disconnectedAt: null, // set on ws close; cleared on a successful RESUME within the grace window
   };
 
   match.players.set(id, player);
+  if (match.isPrivate && match.hostId === null) match.hostId = id;
 
   if (match.phase === 'waiting' && match.players.size >= MAX_PLAYERS) {
-    match.phase = 'live';
-    match.startedAt = Date.now();
-    match.endsAt = Date.now() + TIME_LIMIT_MS;
+    startMatch(match);
   }
 
   return player;

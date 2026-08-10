@@ -203,7 +203,7 @@
         border-radius: 6px;
       }
       #pause-panel button:hover { background: rgba(255, 255, 255, 0.18); }
-      #pause-view-settings.hidden { display: none; }
+      #pause-view-main.hidden, #pause-view-settings.hidden { display: none; }
       .setting-row {
         display: flex;
         align-items: center;
@@ -216,6 +216,94 @@
       .setting-row input[type='range'] { flex: 1; accent-color: #ff4d4d; }
       .setting-value { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
       .setting-row-checkbox { justify-content: flex-start; gap: 10px; }
+
+      /* Main menu / lobby — shown before a match is ever joined (and again,
+         briefly, in the private-room "ready to jump in" hand-off). Same dark
+         panel language as #pause-panel, sits below it (z-index) since the
+         two never show at once. */
+      #main-menu {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(circle at 50% 30%, rgba(40, 40, 46, 0.95), rgba(0, 0, 0, 0.92));
+        color: #fff;
+        z-index: 25;
+      }
+      #main-menu.hidden { display: none; }
+      #menu-panel {
+        background: rgba(20, 20, 24, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 32px 40px;
+        min-width: 320px;
+        text-align: center;
+      }
+      #menu-panel h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        letter-spacing: 2px;
+        color: #ff5a3c;
+      }
+      #menu-tagline {
+        margin: 0 0 24px;
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.6);
+      }
+      #menu-panel button {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 12px;
+        padding: 12px 24px;
+        font-size: 15px;
+        font-family: monospace;
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 6px;
+      }
+      #menu-panel button:hover { background: rgba(255, 255, 255, 0.18); }
+      #menu-quickplay-btn { background: rgba(255, 90, 60, 0.85); border-color: rgba(255, 90, 60, 0.9); font-weight: bold; }
+      #menu-quickplay-btn:hover { background: rgba(255, 90, 60, 1); }
+      .menu-divider {
+        margin: 16px 0 4px;
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.4);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      .menu-join-row { display: flex; gap: 8px; margin-top: 12px; }
+      .menu-join-row input {
+        flex: 1;
+        min-width: 0;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        font-size: 15px;
+        font-family: monospace;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 6px;
+        color: #fff;
+      }
+      .menu-join-row button { width: auto; margin-top: 0; padding: 10px 18px; }
+      #menu-error { margin-top: 14px; min-height: 16px; font-size: 13px; color: #ff6b6b; }
+      #menu-view-home.hidden, #menu-view-lobby.hidden, #menu-view-ready.hidden { display: none; }
+      #lobby-code-label {
+        margin-top: 4px;
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.55);
+        text-transform: uppercase;
+        letter-spacing: 1px;
+      }
+      #lobby-code { margin: 6px 0 18px; font-size: 36px; font-weight: bold; letter-spacing: 6px; color: #ff5a3c; }
+      #lobby-roster { margin-bottom: 8px; font-size: 14px; color: rgba(255, 255, 255, 0.85); }
+      #lobby-start-btn.hidden { display: none; }
+      #menu-ready-message { margin: 0 0 18px; font-size: 13px; color: rgba(255, 255, 255, 0.65); }
     </style>
   </head>
   <body>
@@ -234,9 +322,40 @@
     <div id="scoreboard"></div>
     <div id="netstats"></div>
     <div id="killfeed"></div>
-    <div id="overlay">
-      <div id="overlay-title">OpenFire</div>
-      <div id="overlay-message">Tıkla ve savaşa katıl</div>
+    <!-- Death / match-end messages only, driven entirely by hud.showOverlay()/hideOverlay() —
+         starts hidden; the pre-match join flow now lives in #main-menu below. -->
+    <div id="overlay" class="hidden">
+      <div id="overlay-title"></div>
+      <div id="overlay-message"></div>
+    </div>
+    <div id="main-menu">
+      <div id="menu-panel">
+        <div id="menu-view-home">
+          <h1>OpenFire</h1>
+          <p id="menu-tagline">Kurulum yok. Aç ve savaş.</p>
+          <button id="menu-quickplay-btn">Hızlı Oyun</button>
+          <div class="menu-divider">veya</div>
+          <button id="menu-create-room-btn">Özel Oda Kur</button>
+          <div class="menu-join-row">
+            <input type="text" id="menu-join-code-input" placeholder="ODA KODU" maxlength="5" autocomplete="off" />
+            <button id="menu-join-room-btn">Katıl</button>
+          </div>
+          <div id="menu-error"></div>
+        </div>
+        <div id="menu-view-lobby" class="hidden">
+          <h1>Özel Oda</h1>
+          <div id="lobby-code-label">Oda Kodu</div>
+          <div id="lobby-code"></div>
+          <div id="lobby-roster"></div>
+          <button id="lobby-start-btn" class="hidden">Maçı Başlat</button>
+          <button id="lobby-cancel-btn">İptal</button>
+        </div>
+        <div id="menu-view-ready" class="hidden">
+          <h1>Hazır!</h1>
+          <p id="menu-ready-message">Maç başlıyor</p>
+          <button id="menu-ready-btn">Katılmak için Tıkla</button>
+        </div>
+      </div>
     </div>
     <div id="pause-menu" class="hidden">
       <div id="pause-panel">

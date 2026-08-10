@@ -13,6 +13,18 @@ export const MessageType = {
   MATCH_END: 'match_end',
   PING: 'ping',
   PONG: 'pong',
+
+  // Room / matchmaking (client -> server intents, sent right after connecting)
+  QUICKPLAY: 'quickplay',
+  CREATE_ROOM: 'create_room',
+  JOIN_ROOM: 'join_room',
+  LEAVE_ROOM: 'leave_room',
+  START_MATCH: 'start_match',
+  RESUME: 'resume',
+
+  // Room / matchmaking (server -> client)
+  ROOM_ERROR: 'room_error',
+  RESUME_FAILED: 'resume_failed',
 };
 
 export function encode(message) {

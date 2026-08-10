@@ -13,51 +13,136 @@ import {
   TEAM_B,
   MAGAZINE_SIZE,
   RELOAD_DURATION_MS,
+  MAX_PLAYERS,
+  RECONNECT_GRACE_MS,
+  MIN_PLAYERS_TO_FORCE_START,
 } from '../shared/constants.js';
-import { createMatch, addPlayer, removePlayer, respawnPlayer, resetMatch } from './match.js';
+import { addPlayer, removePlayer, respawnPlayer, resetMatch, startMatch } from './match.js';
+import {
+  createRoom,
+  findOrCreateQuickplayRoom,
+  findRoomByCode,
+  registerPlayerSession,
+  findSession,
+  unregisterSession,
+  removeRoomIfEmpty,
+  getActiveRooms,
+} from './rooms.js';
 import { relocateDummy } from './dummies.js';
 import { updateDummyAI } from './dummyAI.js';
 import { simulateTick } from './simulation.js';
 import { performHitscan, getShotOrigin } from './lagCompensation.js';
-import { broadcast, sendTo } from './net.js';
+import { broadcast, sendTo, sendRaw } from './net.js';
 
-const match = createMatch();
 const FIRE_INTERVAL_MS = 1000 / WEAPON_FIRE_RATE;
 const MATCH_END_DISPLAY_MS = 8000;
 
 const server = http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('COD 2v2 WebSocket server running.\n');
+  res.end('OpenFire WebSocket server running.\n');
 });
 
 const wss = new WebSocketServer({ server });
 
 wss.on('connection', (ws) => {
-  const player = addPlayer(match, ws);
-  console.log(`[net] player ${player.id} joined team ${player.team} (${match.players.size}/4)`);
+  // Per-connection state — null until the client sends a room-assignment
+  // intent (QUICKPLAY/CREATE_ROOM/JOIN_ROOM/RESUME). Connecting no longer
+  // auto-joins anything, so multiple rooms can coexist on one process.
+  let player = null;
+  let currentRoom = null;
 
-  sendTo(player, {
-    type: MessageType.WELCOME,
-    playerId: player.id,
-    team: player.team,
-    position: player.position,
-    yaw: player.yaw,
-    mapVersion: 1,
-  });
+  function sendWelcome() {
+    sendTo(player, {
+      type: MessageType.WELCOME,
+      playerId: player.id,
+      team: player.team,
+      position: player.position,
+      yaw: player.yaw,
+      mapVersion: 1,
+      roomId: currentRoom.id,
+      isPrivate: currentRoom.isPrivate,
+      code: currentRoom.code,
+      hostId: currentRoom.hostId,
+      sessionToken: player.sessionToken,
+    });
+  }
 
-  broadcastScoreUpdate();
+  function joinRoom(room) {
+    currentRoom = room;
+    player = addPlayer(currentRoom, ws);
+    registerPlayerSession(currentRoom, player);
+    console.log(
+      `[net] player ${player.id} joined room ${currentRoom.id}${currentRoom.isPrivate ? ` (${currentRoom.code})` : ''} team ${player.team} (${currentRoom.players.size}/${MAX_PLAYERS})`
+    );
+    sendWelcome();
+    broadcastScoreUpdate(currentRoom);
+  }
 
   ws.on('message', (raw) => {
     const msg = decode(raw.toString());
     if (!msg) return;
 
+    if (!player) {
+      // Not in a room yet — only room-assignment intents are meaningful.
+      if (msg.type === MessageType.QUICKPLAY) {
+        joinRoom(findOrCreateQuickplayRoom());
+      } else if (msg.type === MessageType.CREATE_ROOM) {
+        joinRoom(createRoom({ isPrivate: true }));
+      } else if (msg.type === MessageType.JOIN_ROOM) {
+        const code = typeof msg.code === 'string' ? msg.code.toUpperCase() : '';
+        const room = findRoomByCode(code);
+        if (!room) {
+          sendRaw(ws, { type: MessageType.ROOM_ERROR, message: 'Oda bulunamadı.' });
+        } else if (room.players.size >= MAX_PLAYERS) {
+          sendRaw(ws, { type: MessageType.ROOM_ERROR, message: 'Oda dolu.' });
+        } else if (room.phase !== 'waiting') {
+          sendRaw(ws, { type: MessageType.ROOM_ERROR, message: 'Maç zaten başladı.' });
+        } else {
+          joinRoom(room);
+        }
+      } else if (msg.type === MessageType.RESUME) {
+        const session = findSession(msg.sessionToken);
+        if (!session || session.player.disconnectedAt === null) {
+          sendRaw(ws, { type: MessageType.RESUME_FAILED });
+          return;
+        }
+        currentRoom = session.match;
+        player = session.player;
+        player.ws = ws;
+        player.disconnectedAt = null;
+        console.log(`[net] player ${player.id} resumed room ${currentRoom.id}`);
+        sendWelcome();
+      }
+      return;
+    }
+
     if (msg.type === MessageType.INPUT) {
-      if (!player.alive || match.phase === 'ended') return;
+      if (!player.alive || currentRoom.phase === 'ended') return;
       player.pendingInputs.push({ seq: msg.seq, input: msg.input });
     } else if (msg.type === MessageType.FIRE) {
-      handleFire(player, msg);
+      handleFire(currentRoom, player, msg);
     } else if (msg.type === MessageType.RELOAD) {
       handleReload(player);
+    } else if (msg.type === MessageType.LEAVE_ROOM) {
+      // Only meaningful pre-match — leaving a live match still just means
+      // closing the connection, same as today.
+      if (currentRoom.phase !== 'waiting') return;
+      console.log(`[net] player ${player.id} left room ${currentRoom.id} (lobby)`);
+      removePlayer(currentRoom, player.id);
+      unregisterSession(player.sessionToken);
+      removeRoomIfEmpty(currentRoom);
+      broadcastScoreUpdate(currentRoom);
+      player = null;
+      currentRoom = null;
+    } else if (msg.type === MessageType.START_MATCH) {
+      if (
+        currentRoom.phase === 'waiting' &&
+        player.id === currentRoom.hostId &&
+        currentRoom.players.size >= MIN_PLAYERS_TO_FORCE_START
+      ) {
+        startMatch(currentRoom);
+        broadcastScoreUpdate(currentRoom);
+      }
     } else if (msg.type === MessageType.PING) {
       // Echo the client's own timestamp back unmodified — RTT is computed
       // client-side (now - t) using its own monotonic clock, so the server
@@ -67,13 +152,13 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    console.log(`[net] player ${player.id} left`);
-    removePlayer(match, player.id);
-    broadcastScoreUpdate();
+    if (!player) return; // never joined a room — nothing to clean up
+    console.log(`[net] player ${player.id} disconnected, grace period started`);
+    player.disconnectedAt = Date.now();
   });
 });
 
-function broadcastScoreUpdate(lastKill) {
+function broadcastScoreUpdate(match, lastKill) {
   broadcast(match, {
     type: MessageType.SCORE_UPDATE,
     phase: match.phase,
@@ -83,7 +168,7 @@ function broadcastScoreUpdate(lastKill) {
   });
 }
 
-function handleFire(player, msg) {
+function handleFire(match, player, msg) {
   // Dummy target practice works regardless of match phase (something to
   // shoot while waiting for more players) — only real player damage/scoring
   // stays gated to a 'live' match, checked further below.
@@ -153,7 +238,7 @@ function handleFire(player, msg) {
   });
 
   if (target.health <= 0) {
-    killPlayer(player, target);
+    killPlayer(match, player, target);
   }
 }
 
@@ -166,7 +251,7 @@ function handleReload(player) {
 // Completes any reload whose timer has elapsed, pulling only as many rounds
 // as the (now finite) reserve actually has — a reload started with a
 // half-empty reserve tops off with whatever's left instead of overdrawing it.
-function processReloads() {
+function processReloads(match) {
   const now = Date.now();
   for (const player of match.players.values()) {
     if (player.reloading && player.reloadEndsAt !== null && now >= player.reloadEndsAt) {
@@ -180,18 +265,18 @@ function processReloads() {
   }
 }
 
-function killPlayer(shooter, target) {
+function killPlayer(match, shooter, target) {
   target.alive = false;
   target.deaths += 1;
   target.respawnAt = Date.now() + RESPAWN_DELAY_MS;
   shooter.kills += 1;
   match.scores[shooter.team] += 1;
 
-  broadcastScoreUpdate({ shooterId: shooter.id, targetId: target.id });
-  checkMatchEnd();
+  broadcastScoreUpdate(match, { shooterId: shooter.id, targetId: target.id });
+  checkMatchEnd(match);
 }
 
-function checkMatchEnd() {
+function checkMatchEnd(match) {
   if (match.phase !== 'live') return;
   const a = match.scores[TEAM_A];
   const b = match.scores[TEAM_B];
@@ -203,12 +288,12 @@ function checkMatchEnd() {
     broadcast(match, { type: MessageType.MATCH_END, winner: match.winner, scores: match.scores });
     setTimeout(() => {
       resetMatch(match);
-      broadcastScoreUpdate();
+      broadcastScoreUpdate(match);
     }, MATCH_END_DISPLAY_MS);
   }
 }
 
-function processRespawns() {
+function processRespawns(match) {
   const now = Date.now();
   for (const player of match.players.values()) {
     if (!player.alive && player.respawnAt !== null && now >= player.respawnAt) {
@@ -223,7 +308,23 @@ function processRespawns() {
   }
 }
 
-function broadcastSnapshot() {
+// Finalizes players whose reconnect grace window has elapsed (see ws.on
+// 'close' above) — until then they stay in `match.players`, frozen at their
+// last known position (no pending inputs ever arrive for them, so
+// simulateTick simply never moves them), so a short blip is invisible to
+// everyone else. Deletes the room too once its last player is gone for good.
+function sweepDisconnected(match, now) {
+  for (const player of match.players.values()) {
+    if (player.disconnectedAt !== null && now - player.disconnectedAt > RECONNECT_GRACE_MS) {
+      console.log(`[net] player ${player.id} grace period expired, leaving room ${match.id}`);
+      removePlayer(match, player.id);
+      unregisterSession(player.sessionToken);
+    }
+  }
+  removeRoomIfEmpty(match);
+}
+
+function broadcastSnapshot(match) {
   const players = [];
   for (const p of match.players.values()) {
     players.push({
@@ -260,13 +361,17 @@ function broadcastSnapshot() {
 }
 
 setInterval(() => {
-  simulateTick(match, FIXED_DT);
-  for (const dummy of match.dummies) updateDummyAI(dummy, FIXED_DT);
-  processRespawns();
-  processReloads();
-  broadcastSnapshot();
+  const now = Date.now();
+  for (const match of getActiveRooms()) {
+    simulateTick(match, FIXED_DT);
+    for (const dummy of match.dummies) updateDummyAI(dummy, FIXED_DT);
+    processRespawns(match);
+    processReloads(match);
+    sweepDisconnected(match, now);
+    broadcastSnapshot(match);
+  }
 }, 1000 / TICK_RATE);
 
 server.listen(WS_PORT, () => {
-  console.log(`COD 2v2 server listening on ws://localhost:${WS_PORT}`);
+  console.log(`OpenFire server listening on ws://localhost:${WS_PORT}`);
 });

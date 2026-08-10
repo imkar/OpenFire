@@ -4,11 +4,42 @@ import { WS_PORT } from '../../shared/constants.js';
 // Thin WebSocket wrapper: connects (with auto-reconnect), dispatches
 // incoming messages by type, and exposes typed send helpers.
 const PING_INTERVAL_MS = 1000;
+const SESSION_STORAGE_KEY = 'openfire.session';
+
+function loadStoredToken() {
+  try {
+    const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw).token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function storeToken(token) {
+  try {
+    sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ token }));
+  } catch {
+    // Private browsing / storage disabled — reconnect just won't auto-resume.
+  }
+}
+
+function clearStoredToken() {
+  try {
+    sessionStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 export function createSocket(handlers) {
   let ws = null;
   let playerId = null;
   let lastPingMs = null; // RTT of the most recent ping, or null before the first reply
+  // True from the moment a RESUME is sent until its WELCOME/RESUME_FAILED
+  // reply arrives — lets the WELCOME handler tell a resume apart from a
+  // fresh room join (they share the same message shape/type on purpose).
+  let awaitingResume = false;
 
   function connect() {
     const host = window.location.hostname || 'localhost';
@@ -16,6 +47,11 @@ export function createSocket(handlers) {
 
     ws.addEventListener('open', () => {
       console.log('[net] connected');
+      const storedToken = loadStoredToken();
+      if (storedToken) {
+        awaitingResume = true;
+        ws.send(encode({ type: MessageType.RESUME, sessionToken: storedToken }));
+      }
     });
 
     ws.addEventListener('close', () => {
@@ -32,9 +68,24 @@ export function createSocket(handlers) {
       if (!msg) return;
 
       switch (msg.type) {
-        case MessageType.WELCOME:
+        case MessageType.WELCOME: {
           playerId = msg.playerId;
-          handlers.onWelcome?.(msg);
+          storeToken(msg.sessionToken);
+          if (awaitingResume) {
+            awaitingResume = false;
+            handlers.onResumed?.(msg);
+          } else {
+            handlers.onWelcome?.(msg);
+          }
+          break;
+        }
+        case MessageType.RESUME_FAILED:
+          awaitingResume = false;
+          clearStoredToken();
+          handlers.onResumeFailed?.();
+          break;
+        case MessageType.ROOM_ERROR:
+          handlers.onRoomError?.(msg);
           break;
         case MessageType.SNAPSHOT:
           handlers.onSnapshot?.(msg);
@@ -73,24 +124,40 @@ export function createSocket(handlers) {
     }
   }, PING_INTERVAL_MS);
 
+  function sendIfOpen(message) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(encode(message));
+    }
+  }
+
   return {
     getPlayerId: () => playerId,
     isOpen: () => ws !== null && ws.readyState === WebSocket.OPEN,
     getPing: () => lastPingMs,
     sendInput(seq, input) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(encode({ type: MessageType.INPUT, seq, input }));
-      }
+      sendIfOpen({ type: MessageType.INPUT, seq, input });
     },
     sendFire(direction, timestamp) {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(encode({ type: MessageType.FIRE, direction, timestamp }));
-      }
+      sendIfOpen({ type: MessageType.FIRE, direction, timestamp });
     },
     sendReload() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(encode({ type: MessageType.RELOAD }));
-      }
+      sendIfOpen({ type: MessageType.RELOAD });
+    },
+    sendQuickplay() {
+      sendIfOpen({ type: MessageType.QUICKPLAY });
+    },
+    sendCreateRoom() {
+      sendIfOpen({ type: MessageType.CREATE_ROOM });
+    },
+    sendJoinRoom(code) {
+      sendIfOpen({ type: MessageType.JOIN_ROOM, code });
+    },
+    sendLeaveRoom() {
+      clearStoredToken(); // a deliberate lobby exit shouldn't auto-resume back into the room
+      sendIfOpen({ type: MessageType.LEAVE_ROOM });
+    },
+    sendStartMatch() {
+      sendIfOpen({ type: MessageType.START_MATCH });
     },
   };
 }
