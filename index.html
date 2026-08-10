@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>COD 2v2</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        background: #000;
+        height: 100%;
+        font-family: monospace;
+      }
+      canvas { display: block; }
+
+      /* Always-on "+" reticle (no real sight model on the weapon, so this
+         is the permanent aim reference — both hip-fire and ADS). */
+      #crosshair {
+        --reticle-color: rgba(255, 255, 255, 0.9);
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 24px;
+        height: 24px;
+        margin: -12px 0 0 -12px;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #crosshair .bar {
+        position: absolute;
+        background: var(--reticle-color);
+        mix-blend-mode: difference;
+      }
+      #crosshair .top { left: 50%; top: 0; width: 2px; height: 8px; margin-left: -1px; }
+      #crosshair .bottom { left: 50%; bottom: 0; width: 2px; height: 8px; margin-left: -1px; }
+      #crosshair .left { top: 50%; left: 0; width: 8px; height: 2px; margin-top: -1px; }
+      #crosshair .right { top: 50%; right: 0; width: 8px; height: 2px; margin-top: -1px; }
+
+      /* Classic CoD-style "X" hitmarker — two bars 90° apart from each other
+         (each ±45° off the crosshair's own bars), flashed briefly on a
+         confirmed hit (player or practice dummy). */
+      #hitmarker-x {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: 26px;
+        height: 26px;
+        margin: -13px 0 0 -13px;
+        pointer-events: none;
+        z-index: 11;
+        opacity: 0;
+        transition: opacity 0.08s ease-out;
+      }
+      #hitmarker-x.show { opacity: 1; }
+      #hitmarker-x .bar {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 22px;
+        height: 3px;
+        margin: -1.5px 0 0 -11px;
+        background: #ff4d4d;
+        box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+      }
+      #hitmarker-x .diag1 { transform: rotate(45deg); }
+      #hitmarker-x .diag2 { transform: rotate(-45deg); }
+
+      #hud {
+        position: fixed;
+        left: 16px;
+        bottom: 16px;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 14px;
+        line-height: 1.5;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+      }
+
+      #ammo {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 20px;
+        text-align: right;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+      }
+      #ammo.reloading { color: #ffcc66; }
+
+      #scoreboard {
+        position: fixed;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 16px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+      }
+
+      /* Live client perf/network stats, top-right. */
+      #netstats {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        color: rgba(255, 255, 255, 0.75);
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 12px;
+        text-align: right;
+        line-height: 1.5;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+      }
+      #netstats .bad { color: #ff6b6b; }
+      #netstats .ok { color: #ffcc66; }
+
+      /* Pushed down below #netstats so the two never overlap. */
+      #killfeed {
+        position: fixed;
+        top: 78px;
+        right: 16px;
+        color: #fff;
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 13px;
+        text-align: right;
+        line-height: 1.6;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+      }
+
+      #overlay {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 8px;
+        background: rgba(0, 0, 0, 0.75);
+        color: #fff;
+        z-index: 20;
+        text-align: center;
+      }
+      #overlay.hidden { display: none; }
+      #overlay button {
+        margin-top: 12px;
+        padding: 10px 24px;
+        font-size: 16px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="crosshair">
+      <div class="bar top"></div>
+      <div class="bar bottom"></div>
+      <div class="bar left"></div>
+      <div class="bar right"></div>
+    </div>
+    <div id="hitmarker-x">
+      <div class="bar diag1"></div>
+      <div class="bar diag2"></div>
+    </div>
+    <div id="hud"></div>
+    <div id="ammo"></div>
+    <div id="scoreboard"></div>
+    <div id="netstats"></div>
+    <div id="killfeed"></div>
+    <div id="overlay">
+      <div id="overlay-title">COD 2v2</div>
+      <div id="overlay-message">Tıkla ve savaşa katıl</div>
+    </div>
+    <script type="module" src="/client/main.js"></script>
+  </body>
+</html>

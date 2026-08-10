@@ -1,0 +1,204 @@
+import { createScene } from './render/scene.js';
+import { buildArena } from './render/arena.js';
+import { createViewModel } from './render/player.js';
+import { createControls } from './input/controls.js';
+import { createLocalPlayer } from './game/localPlayer.js';
+import { createRemotePlayers } from './game/remotePlayers.js';
+import { createRemoteDummies } from './game/remoteDummies.js';
+import { startLoop } from './game/loop.js';
+import { createSocket } from './net/socket.js';
+import { createPrediction } from './net/prediction.js';
+import * as hud from './render/hud.js';
+import { spawnBloodEffect } from './render/bloodEffect.js';
+import { playFire, playReload } from './audio/sfx.js';
+import { FIXED_DT, RESPAWN_DELAY_MS, MAGAZINE_SIZE } from '../shared/constants.js';
+
+const { scene, camera, renderer } = createScene();
+buildArena(scene);
+const { gun, muzzleFlash } = createViewModel(camera);
+
+const controls = createControls(renderer.domElement);
+const localPlayer = createLocalPlayer(camera, scene, undefined, gun, muzzleFlash);
+const remotePlayers = createRemotePlayers(scene);
+const remoteDummies = createRemoteDummies(scene);
+
+let myTeam = null;
+let myAlive = true;
+let wasAlive = true;
+let myAmmo = MAGAZINE_SIZE;
+let myReloading = false;
+let wasReloading = false;
+let matchPhase = 'waiting';
+let deathOverlayTimer = null;
+
+function startDeathCountdown() {
+  let remainingMs = RESPAWN_DELAY_MS;
+  hud.showOverlay('Öldün', `${Math.ceil(remainingMs / 1000)} saniye sonra yeniden doğuyorsun`);
+  deathOverlayTimer = setInterval(() => {
+    remainingMs -= 1000;
+    hud.setOverlayMessage(
+      remainingMs > 0 ? `${Math.ceil(remainingMs / 1000)} saniye sonra yeniden doğuyorsun` : 'Yeniden doğuyor...'
+    );
+  }, 1000);
+}
+
+function stopDeathCountdown() {
+  if (deathOverlayTimer) {
+    clearInterval(deathOverlayTimer);
+    deathOverlayTimer = null;
+    hud.hideOverlay();
+  }
+}
+
+const socket = createSocket({
+  onWelcome(msg) {
+    myTeam = msg.team;
+    localPlayer.snapTo({ position: msg.position, velocity: { x: 0, y: 0, z: 0 }, yaw: msg.yaw, onGround: false });
+    hud.updateHealth(100, myTeam);
+    hud.updateAmmo(myAmmo, MAGAZINE_SIZE, myReloading);
+  },
+
+  onSnapshot(msg) {
+    matchPhase = msg.phase;
+    hud.updateScoreboard(msg.scores, msg.phase, msg.players.length);
+
+    const myId = socket.getPlayerId();
+    const me = msg.players.find((p) => p.id === myId);
+
+    if (me) {
+      myAlive = me.alive;
+      myAmmo = me.ammo;
+      myReloading = me.reloading;
+      hud.updateHealth(me.health, myTeam);
+      hud.updateAmmo(myAmmo, MAGAZINE_SIZE, myReloading);
+
+      // Single trigger point for the reload animation + sound — covers both
+      // a manual R press and the server's own auto-reload-on-empty, so
+      // there's no risk of double-triggering a manual reload.
+      if (me.reloading && !wasReloading) {
+        localPlayer.reload();
+        playReload();
+      }
+      wasReloading = me.reloading;
+
+      if (me.alive) {
+        const justRespawned = !wasAlive;
+        if (justRespawned) {
+          localPlayer.snapTo({ position: me.position, velocity: me.velocity, yaw: me.yaw, onGround: me.onGround });
+          stopDeathCountdown();
+        } else {
+          prediction.reconcile(me);
+        }
+      } else {
+        localPlayer.snapTo({ position: me.position, velocity: me.velocity, yaw: me.yaw, onGround: me.onGround });
+        if (!deathOverlayTimer) startDeathCountdown();
+      }
+      wasAlive = me.alive;
+    }
+
+    remotePlayers.ingestSnapshot(msg, myId);
+    remoteDummies.ingestSnapshot(msg.dummies ?? [], msg.t);
+  },
+
+  onHit(msg) {
+    spawnBloodEffect(scene, msg.position);
+    if (msg.shooterId === socket.getPlayerId()) {
+      hud.flashHitmarker();
+      hud.flashHitmarkerX();
+    }
+  },
+
+  onDummyHit(msg) {
+    spawnBloodEffect(scene, msg.position);
+    if (!msg.killed) remoteDummies.flashHit(msg.dummyId);
+    if (msg.shooterId === socket.getPlayerId()) {
+      hud.flashHitmarker();
+      hud.flashHitmarkerX();
+    }
+  },
+
+  onScoreUpdate(msg) {
+    hud.updateScoreboard(msg.scores, msg.phase, msg.playerCount);
+    if (msg.lastKill) {
+      const myId = socket.getPlayerId();
+      const shooterTeam = msg.lastKill.shooterId === myId ? myTeam : remotePlayers.getTeam(msg.lastKill.shooterId);
+      const targetTeam = msg.lastKill.targetId === myId ? myTeam : remotePlayers.getTeam(msg.lastKill.targetId);
+      hud.pushKillfeed(`Oyuncu ${msg.lastKill.shooterId} (${shooterTeam ?? '?'}) → Oyuncu ${msg.lastKill.targetId} (${targetTeam ?? '?'})`);
+    }
+  },
+
+  onMatchEnd(msg) {
+    stopDeathCountdown();
+    const winnerText = msg.winner ? `Takım ${msg.winner} kazandı!` : 'Berabere!';
+    hud.showOverlay('Maç Bitti', `${winnerText}  Skor: A ${msg.scores.A} — ${msg.scores.B} B`);
+  },
+});
+
+const prediction = createPrediction(localPlayer, socket);
+
+// FPS is measured from actual render-callback timing (not the fixed 60Hz
+// simulation tick) and averaged over a short window — updated a few times a
+// second, not every frame, so the HUD text itself doesn't add render cost.
+const NETSTATS_UPDATE_MS = 300;
+let fpsFrameCount = 0;
+let fpsAccumMs = 0;
+let lastFrameTime = performance.now();
+let lastNetstatsUpdate = 0;
+
+startLoop({
+  fixedDt: FIXED_DT,
+  update(dt) {
+    const input = controls.getInput();
+    // Movement and (cosmetic) firing are allowed during warm-up ('waiting')
+    // too — only a fully 'ended' match (between rounds) freezes players.
+    // Damage/scoring stays gated to 'live' server-side regardless of what
+    // the client sends, so firing during warm-up is a harmless no-op there.
+    const canAct = myAlive && matchPhase !== 'ended';
+    const canMove = canAct;
+    const canFire = canAct && myAmmo > 0 && !myReloading;
+
+    if (canMove) {
+      prediction.predictAndSend(input, dt);
+    } else {
+      localPlayer.syncCamera();
+    }
+
+    // Always drain consumeFire()'s queued flag, even when canFire is false —
+    // otherwise a shot requested while out of ammo/mid-reload stays queued
+    // and fires the instant ammo becomes available, regardless of whether
+    // the button is still actually held.
+    const wantsFire = controls.consumeFire();
+    if (canFire && wantsFire) {
+      const { direction } = localPlayer.fire();
+      hud.pulseMuzzle();
+      playFire();
+      socket.sendFire({ x: direction.x, y: direction.y, z: direction.z }, Date.now());
+    }
+
+    // The reload animation + sound trigger from the snapshot's reloading
+    // transition (see onSnapshot) instead of firing immediately here — a
+    // single source of truth that also covers the server's auto-reload
+    // (empty magazine) without double-triggering a manual press.
+    if (canAct && controls.consumeReload()) {
+      socket.sendReload();
+    }
+  },
+  render() {
+    remotePlayers.render();
+    remoteDummies.render();
+    renderer.render(scene, camera);
+
+    const now = performance.now();
+    fpsFrameCount++;
+    fpsAccumMs += now - lastFrameTime;
+    lastFrameTime = now;
+
+    if (now - lastNetstatsUpdate >= NETSTATS_UPDATE_MS) {
+      const fps = fpsAccumMs > 0 ? Math.round((fpsFrameCount * 1000) / fpsAccumMs) : 0;
+      fpsFrameCount = 0;
+      fpsAccumMs = 0;
+      lastNetstatsUpdate = now;
+      hud.updateNetStats(fps, socket.getPing(), socket.isOpen());
+    }
+  },
+});
