@@ -97,7 +97,7 @@ function handleFire(player, msg) {
   if (!msg.direction || typeof msg.direction.x !== 'number') return;
 
   player.ammo -= 1; // spent regardless of whether the shot actually hits anything
-  if (player.ammo <= 0) {
+  if (player.ammo <= 0 && player.reserveAmmo > 0) {
     // Auto-reload the instant the magazine empties — no need to press R.
     player.reloading = true;
     player.reloadEndsAt = Date.now() + RELOAD_DURATION_MS;
@@ -158,18 +158,22 @@ function handleFire(player, msg) {
 }
 
 function handleReload(player) {
-  if (!player.alive || player.reloading || player.ammo >= MAGAZINE_SIZE) return;
+  if (!player.alive || player.reloading || player.ammo >= MAGAZINE_SIZE || player.reserveAmmo <= 0) return;
   player.reloading = true;
   player.reloadEndsAt = Date.now() + RELOAD_DURATION_MS;
 }
 
-// Completes any reload whose timer has elapsed — reserve ammo is unlimited,
-// so this always refills to a full magazine.
+// Completes any reload whose timer has elapsed, pulling only as many rounds
+// as the (now finite) reserve actually has — a reload started with a
+// half-empty reserve tops off with whatever's left instead of overdrawing it.
 function processReloads() {
   const now = Date.now();
   for (const player of match.players.values()) {
     if (player.reloading && player.reloadEndsAt !== null && now >= player.reloadEndsAt) {
-      player.ammo = MAGAZINE_SIZE;
+      const needed = MAGAZINE_SIZE - player.ammo;
+      const taken = Math.min(needed, player.reserveAmmo);
+      player.ammo += taken;
+      player.reserveAmmo -= taken;
       player.reloading = false;
       player.reloadEndsAt = null;
     }
@@ -237,6 +241,7 @@ function broadcastSnapshot() {
       health: p.health,
       alive: p.alive,
       ammo: p.ammo,
+      reserveAmmo: p.reserveAmmo,
       reloading: p.reloading,
       lastProcessedSeq: p.lastProcessedSeq,
     });

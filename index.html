@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COD 2v2</title>
+    <title>OpenFire</title>
+    <meta name="description" content="OpenFire — kurulumsuz, tarayıcıda anında oynanan hızlı 2v2 deathmatch FPS. Gereksinim yok, indirme yok; adresi aç ve ateşe başla." />
     <style>
       html, body {
         margin: 0;
@@ -160,6 +161,61 @@
         font-size: 16px;
         cursor: pointer;
       }
+
+      /* ESC pause menu — separate from #overlay (which is reused for the
+         join/death/match-end messages) so it never fights those for content. */
+      #pause-menu {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.75);
+        color: #fff;
+        z-index: 30;
+      }
+      #pause-menu.hidden { display: none; }
+      #pause-panel {
+        background: rgba(20, 20, 24, 0.94);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        padding: 28px 36px;
+        min-width: 300px;
+        text-align: center;
+      }
+      #pause-panel h1 {
+        margin: 0 0 20px;
+        font-size: 20px;
+        letter-spacing: 1px;
+      }
+      #pause-panel button {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 12px;
+        padding: 10px 24px;
+        font-size: 15px;
+        font-family: monospace;
+        cursor: pointer;
+        background: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 6px;
+      }
+      #pause-panel button:hover { background: rgba(255, 255, 255, 0.18); }
+      #pause-view-settings.hidden { display: none; }
+      .setting-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 14px 0;
+        font-size: 13px;
+        text-align: left;
+      }
+      .setting-row input[type='range'] { flex: 1; accent-color: #ff4d4d; }
+      .setting-value { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
+      .setting-row-checkbox { justify-content: flex-start; gap: 10px; }
     </style>
   </head>
   <body>
@@ -179,8 +235,35 @@
     <div id="netstats"></div>
     <div id="killfeed"></div>
     <div id="overlay">
-      <div id="overlay-title">COD 2v2</div>
+      <div id="overlay-title">OpenFire</div>
       <div id="overlay-message">Tıkla ve savaşa katıl</div>
+    </div>
+    <div id="pause-menu" class="hidden">
+      <div id="pause-panel">
+        <div id="pause-view-main">
+          <h1>Duraklatıldı</h1>
+          <button id="pause-resume-btn">Devam Et</button>
+          <button id="pause-settings-btn">Ayarlar</button>
+        </div>
+        <div id="pause-view-settings" class="hidden">
+          <h1>Ayarlar</h1>
+          <label class="setting-row">
+            <span>Fare Hassasiyeti</span>
+            <input type="range" id="setting-sensitivity" min="0.3" max="3" step="0.05" />
+            <span id="setting-sensitivity-value" class="setting-value"></span>
+          </label>
+          <label class="setting-row">
+            <span>Ses Seviyesi</span>
+            <input type="range" id="setting-volume" min="0" max="1" step="0.05" />
+            <span id="setting-volume-value" class="setting-value"></span>
+          </label>
+          <label class="setting-row setting-row-checkbox">
+            <span>Y Eksenini Ters Çevir</span>
+            <input type="checkbox" id="setting-invert-y" />
+          </label>
+          <button id="pause-back-btn">Geri</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/client/main.js"></script>
   </body>

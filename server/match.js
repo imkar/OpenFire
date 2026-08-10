@@ -1,5 +1,5 @@
 import { spawnPoints } from '../shared/mapData.js';
-import { TEAM_A, TEAM_B, MAX_PLAYERS, PLAYER_MAX_HEALTH, TIME_LIMIT_MS, MAGAZINE_SIZE } from '../shared/constants.js';
+import { TEAM_A, TEAM_B, MAX_PLAYERS, PLAYER_MAX_HEALTH, TIME_LIMIT_MS, MAGAZINE_SIZE, RESERVE_AMMO_SIZE } from '../shared/constants.js';
 import { createDummies } from './dummies.js';
 
 let nextPlayerId = 1;
@@ -57,6 +57,7 @@ export function addPlayer(match, ws) {
     respawnAt: null,
     history: [],
     ammo: MAGAZINE_SIZE,
+    reserveAmmo: RESERVE_AMMO_SIZE,
     reloading: false,
     reloadEndsAt: null,
   };
@@ -93,6 +94,7 @@ export function respawnPlayer(match, player) {
   player.respawnAt = null;
   player.pendingInputs = [];
   player.ammo = MAGAZINE_SIZE;
+  player.reserveAmmo = RESERVE_AMMO_SIZE;
   player.reloading = false;
   player.reloadEndsAt = null;
 }

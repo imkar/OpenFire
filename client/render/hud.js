@@ -29,8 +29,10 @@ export function updateNetStats(fps, pingMs, connected) {
     `<span class="${connClass}">${connText}</span>`;
 }
 
-export function updateAmmo(ammo, magazineSize, reloading) {
-  ammoEl.textContent = reloading ? 'Şarjör değiştiriliyor…' : `${Math.max(0, ammo)} / ${magazineSize}`;
+export function updateAmmo(ammo, reserveAmmo, reloading) {
+  ammoEl.textContent = reloading
+    ? 'Şarjör değiştiriliyor…'
+    : `${Math.max(0, ammo)} / ${Math.max(0, reserveAmmo)}`;
   ammoEl.classList.toggle('reloading', reloading);
 }
 

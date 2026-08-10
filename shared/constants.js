@@ -55,7 +55,8 @@ export const WEAPON_FIRE_RATE = 8; // shots per second
 export const WEAPON_RANGE = 130; // meters — must exceed the 80x80 arena's diagonal (~113m)
 export const LAG_COMPENSATION_WINDOW_MS = 300;
 export const MAGAZINE_SIZE = 24;
-export const RELOAD_DURATION_MS = 1600; // reserve ammo is unlimited — reload always refills fully
+export const RESERVE_AMMO_SIZE = 120; // spare rounds carried outside the magazine, refilled on respawn
+export const RELOAD_DURATION_MS = 1600;
 
 // Networking
 export const WS_PORT = 8080;

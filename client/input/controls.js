@@ -1,5 +1,7 @@
 import { ADS_SENSITIVITY_SCALE, WEAPON_FIRE_RATE } from '../../shared/constants.js';
 import { unlockAudio } from '../audio/sfx.js';
+import { getSettings } from '../settings.js';
+import * as pauseMenu from '../ui/pauseMenu.js';
 
 const MOUSE_SENSITIVITY = 0.0022;
 const PITCH_LIMIT = Math.PI / 2 - 0.01;
@@ -18,6 +20,10 @@ export function createControls(domElement) {
   let jumpQueued = false;
   let reloadQueued = false;
   let aiming = false;
+  // True once pointer lock has been acquired at least once — distinguishes
+  // "never joined yet" (losing lock re-shows the join overlay) from
+  // "was playing, Escape was pressed" (losing lock opens the pause menu).
+  let hasEngaged = false;
 
   const overlay = document.getElementById('overlay');
 
@@ -25,22 +31,58 @@ export function createControls(domElement) {
   // so a click there never reaches domElement's own listener — listen on
   // document instead so both the overlay and the bare canvas trigger lock.
   document.addEventListener('click', () => {
+    if (pauseMenu.isOpen()) return; // the menu's own buttons handle their clicks
     unlockAudio(); // must happen synchronously inside a user-gesture handler
     if (document.pointerLockElement !== domElement) {
       domElement.requestPointerLock();
     }
   });
 
+  pauseMenu.onResume(() => {
+    unlockAudio();
+    domElement.requestPointerLock();
+  });
+
+  // Releases every held key/button — called whenever pointer lock is lost so
+  // nothing stays "on" while the pause menu is up (otherwise a key still
+  // physically held at the moment Escape is pressed would keep driving
+  // movement/fire behind the menu, invisibly, since mouse-look is frozen).
+  function releaseAllInputs() {
+    keys.forward = keys.backward = keys.left = keys.right = false;
+    keys.jump = keys.sprint = keys.leanLeft = keys.leanRight = keys.reload = false;
+    jumpQueued = false;
+    reloadQueued = false;
+    fireRequested = false;
+    firing = false;
+    aiming = false;
+  }
+
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === domElement;
-    if (overlay) overlay.classList.toggle('hidden', locked);
+    if (locked) {
+      hasEngaged = true;
+      pauseMenu.hide();
+      if (overlay) overlay.classList.add('hidden');
+    } else {
+      releaseAllInputs();
+      if (!hasEngaged) {
+        if (overlay) overlay.classList.remove('hidden');
+      } else if (overlay && overlay.classList.contains('hidden')) {
+        // Mid-game Escape, no death/match-end message currently on screen.
+        pauseMenu.show();
+      }
+      // Otherwise a death/match-end message is already showing on #overlay —
+      // leave it alone, the existing click-anywhere-to-continue still works.
+    }
   });
 
   document.addEventListener('mousemove', (e) => {
     if (document.pointerLockElement !== domElement) return;
-    const sensitivity = aiming ? MOUSE_SENSITIVITY * ADS_SENSITIVITY_SCALE : MOUSE_SENSITIVITY;
+    const { sensitivity: sensMultiplier, invertY } = getSettings();
+    const sensitivity =
+      (aiming ? MOUSE_SENSITIVITY * ADS_SENSITIVITY_SCALE : MOUSE_SENSITIVITY) * sensMultiplier;
     yaw -= e.movementX * sensitivity;
-    pitch -= e.movementY * sensitivity;
+    pitch -= e.movementY * sensitivity * (invertY ? -1 : 1);
     pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch));
   });
 
@@ -91,8 +133,16 @@ export function createControls(domElement) {
     }
   }
 
-  window.addEventListener('keydown', (e) => setKey(e.code, true));
-  window.addEventListener('keyup', (e) => setKey(e.code, false));
+  // Gated on pointer lock so a key still physically held (and OS-repeating)
+  // when Escape opens the pause menu can't keep feeding movement/actions.
+  window.addEventListener('keydown', (e) => {
+    if (document.pointerLockElement !== domElement) return;
+    setKey(e.code, true);
+  });
+  window.addEventListener('keyup', (e) => {
+    if (document.pointerLockElement !== domElement) return;
+    setKey(e.code, false);
+  });
 
   return {
     getInput() {

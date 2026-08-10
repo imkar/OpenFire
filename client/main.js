@@ -11,7 +11,7 @@ import { createPrediction } from './net/prediction.js';
 import * as hud from './render/hud.js';
 import { spawnBloodEffect } from './render/bloodEffect.js';
 import { playFire, playReload } from './audio/sfx.js';
-import { FIXED_DT, RESPAWN_DELAY_MS, MAGAZINE_SIZE } from '../shared/constants.js';
+import { FIXED_DT, RESPAWN_DELAY_MS, MAGAZINE_SIZE, RESERVE_AMMO_SIZE } from '../shared/constants.js';
 
 const { scene, camera, renderer } = createScene();
 buildArena(scene);
@@ -26,6 +26,7 @@ let myTeam = null;
 let myAlive = true;
 let wasAlive = true;
 let myAmmo = MAGAZINE_SIZE;
+let myReserveAmmo = RESERVE_AMMO_SIZE;
 let myReloading = false;
 let wasReloading = false;
 let matchPhase = 'waiting';
@@ -55,7 +56,7 @@ const socket = createSocket({
     myTeam = msg.team;
     localPlayer.snapTo({ position: msg.position, velocity: { x: 0, y: 0, z: 0 }, yaw: msg.yaw, onGround: false });
     hud.updateHealth(100, myTeam);
-    hud.updateAmmo(myAmmo, MAGAZINE_SIZE, myReloading);
+    hud.updateAmmo(myAmmo, myReserveAmmo, myReloading);
   },
 
   onSnapshot(msg) {
@@ -68,9 +69,10 @@ const socket = createSocket({
     if (me) {
       myAlive = me.alive;
       myAmmo = me.ammo;
+      myReserveAmmo = me.reserveAmmo;
       myReloading = me.reloading;
       hud.updateHealth(me.health, myTeam);
-      hud.updateAmmo(myAmmo, MAGAZINE_SIZE, myReloading);
+      hud.updateAmmo(myAmmo, myReserveAmmo, myReloading);
 
       // Single trigger point for the reload animation + sound — covers both
       // a manual R press and the server's own auto-reload-on-empty, so

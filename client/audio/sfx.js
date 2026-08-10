@@ -3,18 +3,31 @@
 // assets (procedural geometry, no downloaded models — this is the audio
 // equivalent).
 
+import { getSettings, onSettingsChange } from '../settings.js';
+
 let ctx = null;
+let masterGain = null;
 let noiseBuffer = null;
 
 function getCtx() {
   if (!ctx) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = ctx.createGain();
+    masterGain.gain.value = getSettings().volume;
+    masterGain.connect(ctx.destination);
   }
   if (ctx.state === 'suspended') {
     ctx.resume();
   }
   return ctx;
 }
+
+// The settings panel's volume slider fires 'input' events live, well before
+// the AudioContext may even exist yet — masterGain is only set once
+// getCtx() has run at least once (see unlockAudio()), guarded here.
+onSettingsChange((s) => {
+  if (masterGain) masterGain.gain.value = s.volume;
+});
 
 // Browsers block audio until a user gesture — call this synchronously from
 // the same click handler that requests pointer lock so playback is unlocked
@@ -47,7 +60,7 @@ export function playFire() {
   const noiseGain = context.createGain();
   noiseGain.gain.setValueAtTime(0.5, now);
   noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
-  noise.connect(noiseFilter).connect(noiseGain).connect(context.destination);
+  noise.connect(noiseFilter).connect(noiseGain).connect(masterGain);
   noise.start(now);
   noise.stop(now + 0.1);
 
@@ -58,7 +71,7 @@ export function playFire() {
   const oscGain = context.createGain();
   oscGain.gain.setValueAtTime(0.4, now);
   oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
-  osc.connect(oscGain).connect(context.destination);
+  osc.connect(oscGain).connect(masterGain);
   osc.start(now);
   osc.stop(now + 0.1);
 }
@@ -74,7 +87,7 @@ export function playJump() {
   const gain = context.createGain();
   gain.gain.setValueAtTime(0.3, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
-  osc.connect(gain).connect(context.destination);
+  osc.connect(gain).connect(masterGain);
   osc.start(now);
   osc.stop(now + 0.16);
 }
@@ -95,7 +108,7 @@ export function playThrust() {
   const filter = context.createBiquadFilter();
   filter.type = 'lowpass';
   filter.frequency.setValueAtTime(2000, now);
-  osc.connect(filter).connect(gain).connect(context.destination);
+  osc.connect(filter).connect(gain).connect(masterGain);
   osc.start(now);
   osc.stop(now + 0.3);
 
@@ -107,7 +120,7 @@ export function playThrust() {
   const noiseGain = context.createGain();
   noiseGain.gain.setValueAtTime(0.15, now);
   noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-  noise.connect(noiseFilter).connect(noiseGain).connect(context.destination);
+  noise.connect(noiseFilter).connect(noiseGain).connect(masterGain);
   noise.start(now);
   noise.stop(now + 0.26);
 }
@@ -128,7 +141,7 @@ export function playReload() {
     const gain = context.createGain();
     gain.gain.setValueAtTime(0.22, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
-    osc.connect(gain).connect(context.destination);
+    osc.connect(gain).connect(masterGain);
     osc.start(time);
     osc.stop(time + 0.06);
 
@@ -140,7 +153,7 @@ export function playReload() {
     const noiseGain = context.createGain();
     noiseGain.gain.setValueAtTime(0.12, time);
     noiseGain.gain.exponentialRampToValueAtTime(0.001, time + 0.03);
-    noise.connect(filter).connect(noiseGain).connect(context.destination);
+    noise.connect(filter).connect(noiseGain).connect(masterGain);
     noise.start(time);
     noise.stop(time + 0.04);
   }
@@ -166,7 +179,7 @@ export function startWallRide() {
   const gain = context.createGain();
   gain.gain.setValueAtTime(0, context.currentTime);
   gain.gain.linearRampToValueAtTime(0.18, context.currentTime + 0.08);
-  source.connect(filter).connect(gain).connect(context.destination);
+  source.connect(filter).connect(gain).connect(masterGain);
   source.start();
   rideNode = { source, gain };
 }
