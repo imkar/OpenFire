@@ -104,9 +104,18 @@ const server = http.createServer((req, res) => {
   res.end('OpenFire WebSocket server running.\n');
 });
 
-const wss = new WebSocketServer({ server });
+// perMessageDeflate off: compressing every small, frequent (60Hz) JSON
+// snapshot costs more CPU/latency than the bandwidth savings are worth for
+// a real-time game.
+const wss = new WebSocketServer({ server, perMessageDeflate: false });
 
 wss.on('connection', (ws) => {
+  // Disable Nagle's algorithm — without this, small frequent packets sit
+  // buffered waiting to coalesce or for the peer's delayed ACK, adding up
+  // to ~200ms of avoidable round-trip latency (exactly the symptom this
+  // fixes: real-time snapshots are latency-sensitive, not bandwidth-bound).
+  ws._socket.setNoDelay(true);
+
   // Per-connection state — null until the client sends a room-assignment
   // intent (QUICKPLAY/CREATE_ROOM/JOIN_ROOM/RESUME). Connecting no longer
   // auto-joins anything, so multiple rooms can coexist on one process.
