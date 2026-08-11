@@ -39,7 +39,12 @@ function pickSpawn(team) {
   return points[idx % points.length];
 }
 
-export function addPlayer(match, ws) {
+function sanitizeNickname(raw, id) {
+  const trimmed = typeof raw === 'string' ? raw.trim().slice(0, 16) : '';
+  return trimmed || `Oyuncu ${id}`;
+}
+
+export function addPlayer(match, ws, nickname) {
   const id = nextPlayerId++;
   let countA = 0;
   let countB = 0;
@@ -53,6 +58,7 @@ export function addPlayer(match, ws) {
   const player = {
     id,
     ws,
+    nickname: sanitizeNickname(nickname, id),
     team,
     position: { x: spawn.x, y: spawn.y, z: spawn.z },
     velocity: { x: 0, y: 0, z: 0 },

@@ -194,18 +194,18 @@ const prediction = createPrediction(localPlayer, socket);
 // feel. Private-room create/join defer pointer lock until the final
 // Lobby -> "Hazır, tıkla" step (see onWelcome/onSnapshot above) since they
 // can fail (full room, bad code) and clickable buttons need a real cursor.
-menu.onQuickplay(() => {
-  socket.sendQuickplay();
+menu.onQuickplay((nickname) => {
+  socket.sendQuickplay(nickname);
   controls.requestEngage();
   menu.hide();
 });
 
-menu.onCreateRoom(() => {
-  socket.sendCreateRoom();
+menu.onCreateRoom((nickname) => {
+  socket.sendCreateRoom(nickname);
 });
 
-menu.onJoinRoom((code) => {
-  socket.sendJoinRoom(code);
+menu.onJoinRoom((code, nickname) => {
+  socket.sendJoinRoom(code, nickname);
 });
 
 menu.onCancelLobby(() => {

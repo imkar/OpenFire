@@ -152,14 +152,14 @@ export function createSocket(handlers) {
     sendReload() {
       sendIfOpen({ type: MessageType.RELOAD });
     },
-    sendQuickplay() {
-      sendIfOpen({ type: MessageType.QUICKPLAY });
+    sendQuickplay(nickname) {
+      sendIfOpen({ type: MessageType.QUICKPLAY, nickname });
     },
-    sendCreateRoom() {
-      sendIfOpen({ type: MessageType.CREATE_ROOM });
+    sendCreateRoom(nickname) {
+      sendIfOpen({ type: MessageType.CREATE_ROOM, nickname });
     },
-    sendJoinRoom(code) {
-      sendIfOpen({ type: MessageType.JOIN_ROOM, code });
+    sendJoinRoom(code, nickname) {
+      sendIfOpen({ type: MessageType.JOIN_ROOM, code, nickname });
     },
     sendLeaveRoom() {
       clearStoredToken(); // a deliberate lobby exit shouldn't auto-resume back into the room

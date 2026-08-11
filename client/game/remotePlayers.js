@@ -17,7 +17,7 @@ export function createRemotePlayers(scene) {
       pushSnapshot(p.id, snapshot.t, p.position, p.yaw);
 
       if (!meshes.has(p.id)) {
-        const mesh = createPlayerMesh(p.team);
+        const mesh = createPlayerMesh(p.team, p.nickname);
         scene.add(mesh);
         meshes.set(p.id, mesh);
       }

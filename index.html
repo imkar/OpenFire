@@ -275,6 +275,18 @@
         text-transform: uppercase;
         letter-spacing: 1px;
       }
+      #menu-nickname-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        font-size: 15px;
+        font-family: monospace;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        border-radius: 6px;
+        color: #fff;
+      }
       .menu-join-row { display: flex; gap: 8px; margin-top: 12px; }
       .menu-join-row input {
         flex: 1;
@@ -333,6 +345,7 @@
         <div id="menu-view-home">
           <h1>OpenFire</h1>
           <p id="menu-tagline">Kurulum yok. Aç ve savaş.</p>
+          <input type="text" id="menu-nickname-input" placeholder="TAKMA AD" maxlength="16" autocomplete="off" />
           <button id="menu-quickplay-btn">Hızlı Oyun</button>
           <div class="menu-divider">veya</div>
           <button id="menu-create-room-btn">Özel Oda Kur</button>

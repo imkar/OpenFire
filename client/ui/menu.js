@@ -7,7 +7,28 @@ const quickplayBtn = document.getElementById('menu-quickplay-btn');
 const createRoomBtn = document.getElementById('menu-create-room-btn');
 const joinCodeInput = document.getElementById('menu-join-code-input');
 const joinRoomBtn = document.getElementById('menu-join-room-btn');
+const nicknameInput = document.getElementById('menu-nickname-input');
 const errorEl = document.getElementById('menu-error');
+
+const NICKNAME_STORAGE_KEY = 'openfire.nickname';
+
+try {
+  nicknameInput.value = localStorage.getItem(NICKNAME_STORAGE_KEY) ?? '';
+} catch {
+  // Private browsing / storage disabled — nickname just won't persist across reloads.
+}
+
+// Reads the current nickname and persists it for next time — called right
+// before each join action so the stored value always matches what was sent.
+function getNickname() {
+  const value = nicknameInput.value.trim().slice(0, 16);
+  try {
+    localStorage.setItem(NICKNAME_STORAGE_KEY, value);
+  } catch {
+    // ignore
+  }
+  return value;
+}
 
 const lobbyCodeEl = document.getElementById('lobby-code');
 const lobbyRosterEl = document.getElementById('lobby-roster');
@@ -24,19 +45,19 @@ function setView(view) {
 
 quickplayBtn.addEventListener('click', () => {
   setError('');
-  quickplayHandler?.();
+  quickplayHandler?.(getNickname());
 });
 
 createRoomBtn.addEventListener('click', () => {
   setError('');
-  createRoomHandler?.();
+  createRoomHandler?.(getNickname());
 });
 
 joinRoomBtn.addEventListener('click', () => {
   const code = joinCodeInput.value.trim().toUpperCase();
   if (!code) return;
   setError('');
-  joinRoomHandler?.(code);
+  joinRoomHandler?.(code, getNickname());
 });
 
 // Enter in the code field acts like clicking "Katıl".

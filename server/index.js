@@ -129,9 +129,9 @@ wss.on('connection', (ws) => {
     });
   }
 
-  function joinRoom(room) {
+  function joinRoom(room, nickname) {
     currentRoom = room;
-    player = addPlayer(currentRoom, ws);
+    player = addPlayer(currentRoom, ws, nickname);
     registerPlayerSession(currentRoom, player);
     console.log(
       `[net] player ${player.id} joined room ${currentRoom.id}${currentRoom.isPrivate ? ` (${currentRoom.code})` : ''} team ${player.team} (${currentRoom.players.size}/${MAX_PLAYERS})`
@@ -147,9 +147,9 @@ wss.on('connection', (ws) => {
     if (!player) {
       // Not in a room yet — only room-assignment intents are meaningful.
       if (msg.type === MessageType.QUICKPLAY) {
-        joinRoom(findOrCreateQuickplayRoom());
+        joinRoom(findOrCreateQuickplayRoom(), msg.nickname);
       } else if (msg.type === MessageType.CREATE_ROOM) {
-        joinRoom(createRoom({ isPrivate: true }));
+        joinRoom(createRoom({ isPrivate: true }), msg.nickname);
       } else if (msg.type === MessageType.JOIN_ROOM) {
         const code = typeof msg.code === 'string' ? msg.code.toUpperCase() : '';
         const room = findRoomByCode(code);
@@ -160,7 +160,7 @@ wss.on('connection', (ws) => {
         } else if (room.phase !== 'waiting') {
           sendRaw(ws, { type: MessageType.ROOM_ERROR, message: 'Maç zaten başladı.' });
         } else {
-          joinRoom(room);
+          joinRoom(room, msg.nickname);
         }
       } else if (msg.type === MessageType.RESUME) {
         const session = findSession(msg.sessionToken);
@@ -391,6 +391,7 @@ function broadcastSnapshot(match) {
   for (const p of match.players.values()) {
     players.push({
       id: p.id,
+      nickname: p.nickname,
       team: p.team,
       position: p.position,
       velocity: p.velocity,

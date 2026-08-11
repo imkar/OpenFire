@@ -52,8 +52,37 @@ const TEAM_COLORS = {
   B: 0x428bca, // cool
 };
 
-// Remote/enemy player representation: a capsule body color-coded by team.
-export function createPlayerMesh(team) {
+// Draws `nickname` onto a canvas and wraps it in a THREE.Sprite — sprites
+// always face the camera (free billboarding), so this needs no per-frame
+// look-at logic. depthTest stays on (default) so walls/other geometry
+// occlude it normally, same as the player mesh it floats above.
+function createNicknameSprite(nickname) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 40px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 6;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeText(nickname, canvas.width / 2, canvas.height / 2);
+  ctx.fillText(nickname, canvas.width / 2, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.3, 0.325, 1);
+  // Local to the group, same origin convention as mesh.position.y below —
+  // sits just above the capsule's head (capsule top ≈ 0.9 + 0.9 = 1.8).
+  sprite.position.y = 2.15;
+  return sprite;
+}
+
+// Remote/enemy player representation: a capsule body color-coded by team,
+// plus a floating nickname label when one is provided.
+export function createPlayerMesh(team, nickname) {
   const geo = new THREE.CapsuleGeometry(0.35, 1.1, 4, 8);
   const mat = new THREE.MeshLambertMaterial({ color: TEAM_COLORS[team] ?? 0xffffff });
   const mesh = new THREE.Mesh(geo, mat);
@@ -62,5 +91,8 @@ export function createPlayerMesh(team) {
   mesh.position.y = 0.9;
   const group = new THREE.Group();
   group.add(mesh);
+  if (nickname) {
+    group.add(createNicknameSprite(nickname));
+  }
   return group;
 }
