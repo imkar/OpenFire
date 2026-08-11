@@ -42,8 +42,17 @@ export function createSocket(handlers) {
   let awaitingResume = false;
 
   function connect() {
+    // In production the client and WebSocket server are served from the
+    // same origin (see server/index.js), so we reuse window.location's
+    // protocol/host/port as-is. The Vite dev server (port 5173) proxies
+    // nothing, so dev mode falls back to the standalone WS_PORT instead.
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.hostname || 'localhost';
-    ws = new WebSocket(`ws://${host}:${WS_PORT}`);
+    const isViteDevServer = window.location.port === '5173';
+    const wsUrl = isViteDevServer
+      ? `${protocol}//${host}:${WS_PORT}`
+      : `${protocol}//${window.location.host}`;
+    ws = new WebSocket(wsUrl);
 
     ws.addEventListener('open', () => {
       console.log('[net] connected');

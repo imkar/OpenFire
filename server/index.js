@@ -1,4 +1,7 @@
 import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { MessageType, decode } from '../shared/protocol.js';
 import {
@@ -37,7 +40,66 @@ import { broadcast, sendTo, sendRaw } from './net.js';
 const FIRE_INTERVAL_MS = 1000 / WEAPON_FIRE_RATE;
 const MATCH_END_DISPLAY_MS = 8000;
 
+// Serves the Vite-built client (dist/) from the same port as the WebSocket
+// server so production deploys avoid mixed-content issues (single origin,
+// single protocol). Falls back to a plain status response when dist/
+// hasn't been built yet (e.g. local `npm run dev:server`).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = path.join(__dirname, '..', 'dist');
+const SERVE_STATIC = fs.existsSync(DIST_DIR);
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.wasm': 'application/wasm',
+  '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
+  '.ogg': 'audio/ogg',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
+
+function serveStaticFile(req, res) {
+  const requestPath = decodeURIComponent(req.url.split('?')[0]);
+  const filePath = path.join(DIST_DIR, requestPath === '/' ? 'index.html' : requestPath);
+
+  if (!filePath.startsWith(DIST_DIR)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      fs.readFile(path.join(DIST_DIR, 'index.html'), (fallbackErr, fallbackData) => {
+        if (fallbackErr) {
+          res.writeHead(404);
+          res.end('Not found');
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': MIME_TYPES['.html'] });
+        res.end(fallbackData);
+      });
+      return;
+    }
+    const ext = path.extname(filePath);
+    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    res.end(data);
+  });
+}
+
 const server = http.createServer((req, res) => {
+  if (SERVE_STATIC) {
+    serveStaticFile(req, res);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('OpenFire WebSocket server running.\n');
 });
@@ -372,6 +434,8 @@ setInterval(() => {
   }
 }, 1000 / TICK_RATE);
 
-server.listen(WS_PORT, () => {
-  console.log(`OpenFire server listening on ws://localhost:${WS_PORT}`);
+const PORT = process.env.PORT || WS_PORT;
+
+server.listen(PORT, () => {
+  console.log(`OpenFire server listening on ws://localhost:${PORT}`);
 });
