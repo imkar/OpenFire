@@ -78,16 +78,19 @@ function getHistoricalPosition(player, timestamp) {
   return player.position;
 }
 
-// Server-authoritative hitscan: rewinds every other player to where they were
-// at the shooter's claimed timestamp (clamped to LAG_COMPENSATION_WINDOW_MS)
+// Server-authoritative hitscan: rewinds every other player to `now - rewindMs`
 // and raycasts against that historical state, plus static world geometry.
-// Practice-target dummies are checked at their current position (no lag
-// compensation) — they wander slowly and this is casual target practice,
-// not competitive hit-reg, so the small discrepancy doesn't matter.
-// Whichever of world/player/dummy is genuinely closest along the ray wins.
-export function performHitscan({ shooter, origin, direction, timestamp, players, dummies = [] }) {
+// `rewindMs` is computed by the caller from the server's OWN ping/pong RTT
+// measurement (see server/index.js), never from a client-reported
+// timestamp — trusting the shooter's clock for the rewind point would let a
+// modified client bias hit detection within the window. Practice-target
+// dummies are checked at their current position (no lag compensation) —
+// they wander slowly and this is casual target practice, not competitive
+// hit-reg, so the small discrepancy doesn't matter. Whichever of
+// world/player/dummy is genuinely closest along the ray wins.
+export function performHitscan({ shooter, origin, direction, rewindMs, players, dummies = [] }) {
   const now = Date.now();
-  const clampedTimestamp = Math.max(timestamp, now - LAG_COMPENSATION_WINDOW_MS);
+  const clampedTimestamp = now - Math.max(0, Math.min(rewindMs, LAG_COMPENSATION_WINDOW_MS));
 
   let closestT = WEAPON_RANGE;
   let hitPlayerId = null;

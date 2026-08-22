@@ -19,6 +19,7 @@ import {
   MAX_PLAYERS,
   RECONNECT_GRACE_MS,
   MIN_PLAYERS_TO_FORCE_START,
+  INTERP_DELAY_MS,
 } from '../shared/constants.js';
 import { addPlayer, removePlayer, respawnPlayer, resetMatch, startMatch } from './match.js';
 import {
@@ -116,6 +117,23 @@ wss.on('connection', (ws) => {
   // fixes: real-time snapshots are latency-sensitive, not bandwidth-bound).
   ws._socket.setNoDelay(true);
 
+  // Server-measured RTT via native WebSocket protocol ping/pong frames (RFC
+  // 6455) — every WebSocket client answers these automatically at the
+  // transport level, no app-level message or client cooperation needed.
+  // This is the number lag compensation's rewind actually uses (see
+  // handleFire below); the client's own app-level PING/PONG loop is a
+  // separate, purely cosmetic measurement for the ping the player sees.
+  let rtt = null;
+  let pingSentAt = null;
+  const rttPingInterval = setInterval(() => {
+    if (ws.readyState !== ws.OPEN) return;
+    pingSentAt = Date.now();
+    ws.ping();
+  }, 1000);
+  ws.on('pong', () => {
+    if (pingSentAt !== null) rtt = Date.now() - pingSentAt;
+  });
+
   // Per-connection state — null until the client sends a room-assignment
   // intent (QUICKPLAY/CREATE_ROOM/JOIN_ROOM/RESUME). Connecting no longer
   // auto-joins anything, so multiple rooms can coexist on one process.
@@ -191,7 +209,7 @@ wss.on('connection', (ws) => {
       if (!player.alive || currentRoom.phase === 'ended') return;
       player.pendingInputs.push({ seq: msg.seq, input: msg.input });
     } else if (msg.type === MessageType.FIRE) {
-      handleFire(currentRoom, player, msg);
+      handleFire(currentRoom, player, msg, rtt);
     } else if (msg.type === MessageType.RELOAD) {
       handleReload(player);
     } else if (msg.type === MessageType.LEAVE_ROOM) {
@@ -223,6 +241,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    clearInterval(rttPingInterval);
     if (!player) return; // never joined a room — nothing to clean up
     console.log(`[net] player ${player.id} disconnected, grace period started`);
     player.disconnectedAt = Date.now();
@@ -239,7 +258,7 @@ function broadcastScoreUpdate(match, lastKill) {
   });
 }
 
-function handleFire(match, player, msg) {
+function handleFire(match, player, msg, rtt) {
   // Dummy target practice works regardless of match phase (something to
   // shoot while waiting for more players) — only real player damage/scoring
   // stays gated to a 'live' match, checked further below.
@@ -260,11 +279,18 @@ function handleFire(match, player, msg) {
   }
 
   const origin = getShotOrigin(player);
+  // Rewind point comes entirely from the server's own RTT measurement (native
+  // ws ping/pong, see wss.on('connection') above) plus the client's fixed
+  // interpolation buffer delay — never from a client-reported timestamp,
+  // which a modified client could set arbitrarily to bias hit detection.
+  // `rtt` is null for the first ~1s of a connection (no pong yet); that just
+  // means no lag-comp rewind until the first sample lands.
+  const rewindMs = (rtt ?? 0) / 2 + INTERP_DELAY_MS;
   const result = performHitscan({
     shooter: player,
     origin,
     direction: msg.direction,
-    timestamp: msg.timestamp ?? now,
+    rewindMs,
     players: match.players,
     dummies: match.dummies,
   });
