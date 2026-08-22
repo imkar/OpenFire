@@ -8,6 +8,7 @@ const crosshairEl = document.getElementById('crosshair');
 const hitmarkerXEl = document.getElementById('hitmarker-x');
 const ammoEl = document.getElementById('ammo');
 const netstatsEl = document.getElementById('netstats');
+const netstatsDebugEl = document.getElementById('netstats-debug');
 
 const KILLFEED_MAX = 5;
 const KILLFEED_TTL_MS = 5000;
@@ -27,6 +28,41 @@ export function updateNetStats(fps, pingMs, connected) {
     `<span class="${fpsClass}">${fps} FPS</span><br/>` +
     `<span class="${pingClass}">Ping: ${pingText}</span><br/>` +
     `<span class="${connClass}">${connText}</span>`;
+}
+
+// Dev-only expanded debug panel (F3 to toggle, see main.js) — jitter,
+// packet loss surrogate, reconciliation error, bandwidth, snapshot cadence,
+// none of which fit in the always-on #netstats corner without cluttering it
+// for regular players.
+let debugVisible = false;
+
+export function setDebugStatsVisible(visible) {
+  debugVisible = visible;
+  netstatsDebugEl?.classList.toggle('hidden', !visible);
+}
+
+export function toggleDebugStats() {
+  setDebugStatsVisible(!debugVisible);
+  return debugVisible;
+}
+
+export function isDebugStatsVisible() {
+  return debugVisible;
+}
+
+const fmt = (v, unit = '', digits = 0) => (v === null || v === undefined ? '…' : `${v.toFixed(digits)}${unit}`);
+
+export function updateDebugStats(stats) {
+  if (!netstatsDebugEl || !debugVisible) return;
+  netstatsDebugEl.innerHTML = [
+    `RTT p50/p95: ${fmt(stats.p50, 'ms')} / ${fmt(stats.p95, 'ms')}`,
+    `Jitter: ${fmt(stats.jitter, 'ms')}`,
+    `Snapshot aralığı: ${fmt(stats.snapshotIntervalMs, 'ms')}`,
+    `Mutabakat: ${stats.reconcileCount ?? 0}/s, ort. ${fmt(stats.reconcileAvgMag, 'm', 2)}`,
+    `Bant: ↓${fmt(stats.bytesInPerSec / 1000, 'KB/s', 1)} ↑${fmt(stats.bytesOutPerSec / 1000, 'KB/s', 1)}`,
+    `Ağ profili: ${stats.netProfile ?? 'temiz'}`,
+    `[F3 kapat · 1-5 profil · C CSV indir]`,
+  ].join('<br/>');
 }
 
 export function updateAmmo(ammo, reserveAmmo, reloading) {

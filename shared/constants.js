@@ -62,6 +62,7 @@ export const RELOAD_DURATION_MS = 1600;
 export const WS_PORT = 8080;
 export const INTERP_DELAY_MS = 100;
 export const RECONCILE_BLEND = 0.2; // fraction of positional error corrected per frame
+export const RECONCILE_SNAP_DISTANCE_M = 1.5; // corrections larger than this hard-snap instead of smoothing — a multi-frame slide reads worse than a single pop once the error is this big (e.g. after a lag spike)
 
 // Match
 export const MAX_PLAYERS = 4;

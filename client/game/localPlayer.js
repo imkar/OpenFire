@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { step } from '../../shared/movement.js';
 import { resolveLeanOffset } from '../../shared/collision.js';
 import {
-  EYE_HEIGHT, RECONCILE_BLEND, LEAN_DISTANCE, LEAN_ROLL, WALL_RUN_ROLL,
+  EYE_HEIGHT, RECONCILE_BLEND, RECONCILE_SNAP_DISTANCE_M, LEAN_DISTANCE, LEAN_ROLL, WALL_RUN_ROLL,
   ADS_FOV, ADS_EASE_RATE, MAX_AIR_JUMPS, RELOAD_DURATION_MS,
 } from '../../shared/constants.js';
 import { colliders } from '../../shared/mapData.js';
@@ -267,6 +267,7 @@ export function createLocalPlayer(camera, scene, spawn = { x: 0, y: 0, z: 5, yaw
   // Snaps simulation state to the server's authoritative value, replays any
   // not-yet-acknowledged inputs to catch back up to "now", then records the
   // resulting visual pop as a decaying offset so the correction is invisible.
+  // Returns the correction magnitude (meters) for netStats telemetry.
   function reconcileWithServer(serverState, pendingInputs) {
     const beforeRender = {
       x: state.position.x + visualOffset.x,
@@ -279,9 +280,25 @@ export function createLocalPlayer(camera, scene, spawn = { x: 0, y: 0, z: 5, yaw
       replayInput(input, dt);
     }
 
-    visualOffset.x = beforeRender.x - state.position.x;
-    visualOffset.y = beforeRender.y - state.position.y;
-    visualOffset.z = beforeRender.z - state.position.z;
+    const dx = beforeRender.x - state.position.x;
+    const dy = beforeRender.y - state.position.y;
+    const dz = beforeRender.z - state.position.z;
+    const magnitude = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    if (magnitude > RECONCILE_SNAP_DISTANCE_M) {
+      // Large correction (lag spike, desync) — smoothing this over several
+      // frames at RECONCILE_BLEND would look like a slow slide across the
+      // map; a single pop reads better once the error is this big.
+      visualOffset.x = 0;
+      visualOffset.y = 0;
+      visualOffset.z = 0;
+    } else {
+      visualOffset.x = dx;
+      visualOffset.y = dy;
+      visualOffset.z = dz;
+    }
+
+    return magnitude;
   }
 
   // Starts the reload dip animation immediately (see the RELOAD_ constants

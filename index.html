@@ -126,6 +126,25 @@
       #netstats .bad { color: #ff6b6b; }
       #netstats .ok { color: #ffcc66; }
 
+      /* Dev-only expanded debug panel (F3 toggles, see main.js) — top-left
+         so it never collides with #netstats/#killfeed on the right. */
+      #netstats-debug {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        color: rgba(255, 255, 255, 0.85);
+        text-shadow: 0 0 4px rgba(0, 0, 0, 0.9);
+        font-size: 11px;
+        line-height: 1.5;
+        pointer-events: none;
+        z-index: 10;
+        user-select: none;
+        background: rgba(0, 0, 0, 0.35);
+        padding: 6px 10px;
+        border-radius: 4px;
+      }
+      #netstats-debug.hidden { display: none; }
+
       /* Pushed down below #netstats so the two never overlap. */
       #killfeed {
         position: fixed;
@@ -333,6 +352,7 @@
     <div id="ammo"></div>
     <div id="scoreboard"></div>
     <div id="netstats"></div>
+    <div id="netstats-debug" class="hidden"></div>
     <div id="killfeed"></div>
     <!-- Death / match-end messages only, driven entirely by hud.showOverlay()/hideOverlay() —
          starts hidden; the pre-match join flow now lives in #main-menu below. -->

@@ -32,7 +32,7 @@ function clearStoredToken() {
   }
 }
 
-export function createSocket(handlers) {
+export function createSocket(handlers, { netStats = null, netSim = null } = {}) {
   let ws = null;
   let playerId = null;
   let lastPingMs = null; // RTT of the most recent ping, or null before the first reply
@@ -73,7 +73,13 @@ export function createSocket(handlers) {
     });
 
     ws.addEventListener('message', (event) => {
-      const msg = decode(event.data);
+      netStats?.recordBytesIn(event.data.length ?? 0);
+      if (netSim) netSim.schedule(() => handleMessage(event.data));
+      else handleMessage(event.data);
+    });
+
+    function handleMessage(raw) {
+      const msg = decode(raw);
       if (!msg) return;
 
       switch (msg.type) {
@@ -97,6 +103,7 @@ export function createSocket(handlers) {
           handlers.onRoomError?.(msg);
           break;
         case MessageType.SNAPSHOT:
+          netStats?.recordSnapshot(Date.now());
           handlers.onSnapshot?.(msg);
           break;
         case MessageType.HIT:
@@ -116,11 +123,12 @@ export function createSocket(handlers) {
           break;
         case MessageType.PONG:
           lastPingMs = performance.now() - msg.t;
+          netStats?.recordRtt(lastPingMs);
           break;
         default:
           break;
       }
-    });
+    }
   }
 
   connect();
@@ -128,26 +136,28 @@ export function createSocket(handlers) {
   // Started once (not inside connect()) so reconnects never spawn a second
   // overlapping interval — the send itself is a no-op while disconnected.
   setInterval(() => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(encode({ type: MessageType.PING, t: performance.now() }));
-    }
+    sendIfOpen({ type: MessageType.PING, t: performance.now() });
   }, PING_INTERVAL_MS);
 
   function sendIfOpen(message) {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(encode(message));
-    }
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const payload = encode(message);
+    netStats?.recordBytesOut(payload.length);
+    if (netSim) netSim.schedule(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(payload); });
+    else ws.send(payload);
   }
 
   return {
     getPlayerId: () => playerId,
     isOpen: () => ws !== null && ws.readyState === WebSocket.OPEN,
     getPing: () => lastPingMs,
+    getNetProfile: () => netSim?.getProfile() ?? null,
+    setNetProfile: (name) => netSim?.setProfile(name),
     sendInput(seq, input) {
       sendIfOpen({ type: MessageType.INPUT, seq, input });
     },
-    sendFire(direction, timestamp) {
-      sendIfOpen({ type: MessageType.FIRE, direction, timestamp });
+    sendFire(direction) {
+      sendIfOpen({ type: MessageType.FIRE, direction });
     },
     sendReload() {
       sendIfOpen({ type: MessageType.RELOAD });

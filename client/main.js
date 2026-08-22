@@ -8,6 +8,8 @@ import { createRemoteDummies } from './game/remoteDummies.js';
 import { startLoop } from './game/loop.js';
 import { createSocket } from './net/socket.js';
 import { createPrediction } from './net/prediction.js';
+import { createNetStats } from './net/netStats.js';
+import { createNetSim } from './net/netSim.js';
 import * as hud from './render/hud.js';
 import * as menu from './ui/menu.js';
 import * as pauseMenu from './ui/pauseMenu.js';
@@ -59,6 +61,13 @@ function stopDeathCountdown() {
     hud.hideOverlay();
   }
 }
+
+// Dev-only netcode telemetry + artificial-network-condition injector (see
+// client/net/netStats.js, client/net/netSim.js). `import.meta.env.DEV` is
+// statically false in production builds, so this branch — and therefore
+// both modules — is dead-code-eliminated out of the shipped bundle.
+const netStats = import.meta.env.DEV ? createNetStats() : null;
+const netSim = import.meta.env.DEV ? createNetSim() : null;
 
 const socket = createSocket({
   onWelcome(msg) {
@@ -184,9 +193,11 @@ const socket = createSocket({
     const winnerText = msg.winner ? `Takım ${msg.winner} kazandı!` : 'Berabere!';
     hud.showOverlay('Maç Bitti', `${winnerText}  Skor: A ${msg.scores.A} — ${msg.scores.B} B`);
   },
-});
+}, { netStats, netSim });
 
-const prediction = createPrediction(localPlayer, socket);
+const prediction = createPrediction(localPlayer, socket, {
+  onReconcile: (magnitude) => netStats?.recordReconcile(magnitude),
+});
 
 // Quickplay essentially never fails, so it engages pointer lock immediately
 // (synchronously, from the click itself — see controls.js's requestEngage)
@@ -224,6 +235,44 @@ menu.onReady(() => {
 });
 
 menu.showHome();
+
+// Dev-only debug HUD: F3 toggles the expanded panel, 1-5 switch network-sim
+// profiles (temiz/iyi/tipikMobil/kötü/felaket) while it's open, C downloads
+// the last 60s of telemetry as CSV — see the "Ağ koşulu simülatörü" /
+// "Ölçüm HUD'u" plan phases. Entirely stripped from production builds along
+// with netStats/netSim (see their creation above).
+if (import.meta.env.DEV) {
+  setInterval(() => {
+    if (!netStats) return;
+    const sample = netStats.tick();
+    hud.updateDebugStats({ ...sample, netProfile: netSim?.getProfile() });
+  }, 1000);
+
+  function downloadCsv(csv) {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `openfire-netstats-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'F3') {
+      e.preventDefault();
+      hud.toggleDebugStats();
+      return;
+    }
+    if (!hud.isDebugStatsVisible()) return;
+    if (e.code >= 'Digit1' && e.code <= 'Digit5') {
+      const name = netSim?.profiles[Number(e.code.slice(-1)) - 1];
+      if (name) netSim.setProfile(name);
+    } else if (e.code === 'KeyC') {
+      downloadCsv(netStats.exportCsv());
+    }
+  });
+}
 
 // FPS is measured from actual render-callback timing (not the fixed 60Hz
 // simulation tick) and averaged over a short window — updated a few times a
@@ -265,7 +314,7 @@ startLoop({
       const { direction } = localPlayer.fire();
       hud.pulseMuzzle();
       playFire();
-      socket.sendFire({ x: direction.x, y: direction.y, z: direction.z }, Date.now());
+      socket.sendFire({ x: direction.x, y: direction.y, z: direction.z });
     }
 
     // The reload animation + sound trigger from the snapshot's reloading

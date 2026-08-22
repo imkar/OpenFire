@@ -4,7 +4,7 @@ const PENDING_INPUT_LIMIT = 180; // ~3s at 60Hz, generous safety cap
 // player: assigns sequence numbers, sends inputs, buffers them until the
 // server acknowledges, and replays unacknowledged inputs on top of each
 // authoritative snapshot.
-export function createPrediction(localPlayer, socket) {
+export function createPrediction(localPlayer, socket, { onReconcile } = {}) {
   let seq = 0;
   const pendingInputs = []; // { seq, input, dt }
 
@@ -21,7 +21,7 @@ export function createPrediction(localPlayer, socket) {
       pendingInputs.shift();
     }
 
-    localPlayer.reconcileWithServer(
+    const magnitude = localPlayer.reconcileWithServer(
       {
         position: serverPlayerState.position,
         velocity: serverPlayerState.velocity,
@@ -34,6 +34,7 @@ export function createPrediction(localPlayer, socket) {
       },
       pendingInputs
     );
+    onReconcile?.(magnitude);
   }
 
   return { predictAndSend, reconcile };
